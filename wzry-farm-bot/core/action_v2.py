@@ -209,45 +209,81 @@ class ActionExecutorV2:
         """执行单个步骤"""
         action = step.action
         target = step.target
-        
+
+        # 解析扩展参数
+        params = self._parse_step_params(step)
+
         if action == "click_template":
-            return self.click_template(target)
-        
+            # 支持区域限定
+            region = self.action_base.parse_region(params.get("region", ""))
+            return self.click_template(
+                target,
+                region=region,
+                threshold=params.get("threshold")
+            )
+
         elif action == "click_position":
-            x, y = map(int, target.split(","))
-            self.click_position(x, y)
+            # 支持比例和百分比
+            self.click_position(coord=target)
             return True
-        
+
+        elif action == "click_region":
+            # 点击区域中心
+            region = self.action_base.parse_region(target)
+            if region:
+                self.action_base.click_region(region)
+            return True
+
         elif action == "long_press":
-            # 格式: "x,y,duration" 或 "x,y"（默认1秒）
-            parts = target.split(",")
-            x, y = int(parts[0]), int(parts[1])
-            duration = float(parts[2]) if len(parts) > 2 else 1.0
-            self.long_press(x, y, duration)
+            # 格式: "x,y,duration" 或 比例格式
+            self.long_press(coord=target)
             return True
-        
+
         elif action == "swipe":
             self.swipe(target)
             return True
-        
+
         elif action == "wait":
             self.wait(float(target))
             return True
-        
+
         elif action == "back":
             self.back()
             return True
-        
+
         elif action == "find_all":
-            positions = self.find_all(target)
+            region = self.action_base.parse_region(params.get("region", ""))
+            positions = self.find_all(target, region=region)
             return len(positions) > 0
-        
+
         elif action == "click_found":
             return self.click_found()
-        
+
+        elif action == "exists":
+            # 判断元素是否存在（不点击）
+            region = self.action_base.parse_region(params.get("region", ""))
+            return self.action_base.exists(target, region=region)
+
+        elif action == "wait_for":
+            # 等待元素出现
+            region = self.action_base.parse_region(params.get("region", ""))
+            timeout = float(params.get("timeout", "10"))
+            return self.action_base.wait_for(target, timeout=timeout, region=region)
+
         else:
             logger.warning(f"未知动作: {action}")
             return False
+
+    def _parse_step_params(self, step: OperationStep) -> dict:
+        """解析步骤的扩展参数"""
+        params = {}
+        if step.description and "|" in step.description:
+            # 支持在description中写参数: "点击按钮|region:100,200,500,800"
+            for part in step.description.split("|"):
+                if ":" in part:
+                    k, v = part.split(":", 1)
+                    params[k.strip()] = v.strip()
+        return params
     
     # ========== 高级操作（封装常用流程）==========
     

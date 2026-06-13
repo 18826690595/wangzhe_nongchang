@@ -44,39 +44,56 @@ class VisionEngine:
         logger.info(f"已加载 {len(self.templates)} 个模板")
     
     def find_template(
-        self, 
-        screenshot: np.ndarray, 
+        self,
+        screenshot: np.ndarray,
         template_name: str,
-        threshold: float = 0.8
+        threshold: float = 0.8,
+        region: Optional[Tuple[int, int, int, int]] = None
     ) -> Optional[Tuple[int, int, int, int]]:
         """
         在截图中查找模板
-        
+
         Args:
             screenshot: 截图（numpy数组）
             template_name: 模板名称
             threshold: 匹配阈值（0-1）
-            
+            region: 限定识别区域 (x1,y1,x2,y2)，None为全屏
+
         Returns:
             匹配区域 (x, y, width, height) 或 None
         """
         if template_name not in self.templates:
             logger.warning(f"模板不存在: {template_name}")
             return None
-        
+
         template = self.templates[template_name]
-        
+        h, w = template.shape[:2]
+
+        # 裁剪区域
+        search_img = screenshot
+        offset_x, offset_y = 0, 0
+
+        if region:
+            x1, y1, x2, y2 = region
+            # 边界检查
+            h_img, w_img = screenshot.shape[:2]
+            x1 = max(0, min(x1, w_img))
+            y1 = max(0, min(y1, h_img))
+            x2 = max(x1, min(x2, w_img))
+            y2 = max(y1, min(y2, h_img))
+            search_img = screenshot[y1:y2, x1:x2]
+            offset_x, offset_y = x1, y1
+            logger.debug(f"限定区域: ({x1},{y1})-({x2},{y2})")
+
         # 模板匹配
-        result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
+        result = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-        
+
         if max_val >= threshold:
-            h, w = template.shape[:2]
             x, y = max_loc
-            logger.debug(f"找到模板 '{template_name}': 位置({x}, {y}), 置信度{max_val:.2f}")
-            return (x, y, w, h)
-        
-        logger.debug(f"未找到模板 '{template_name}': 最高置信度{max_val:.2f}")
+            # 还原到全图坐标
+            return (offset_x + x, offset_y + y, w, h)
+
         return None
     
     def find_all_templates(
@@ -84,46 +101,63 @@ class VisionEngine:
         screenshot: np.ndarray,
         template_name: str,
         threshold: float = 0.8,
-        min_distance: int = 50
+        min_distance: int = 50,
+        region: Optional[Tuple[int, int, int, int]] = None
     ) -> List[Tuple[int, int, int, int]]:
         """
         查找所有匹配的模板（多个结果）
-        
+
         Args:
             screenshot: 截图
             template_name: 模板名称
             threshold: 匹配阈值
             min_distance: 最小距离（去重）
-            
+            region: 限定识别区域 (x1,y1,x2,y2)
+
         Returns:
             匹配区域列表
         """
         if template_name not in self.templates:
             return []
-        
+
         template = self.templates[template_name]
         h, w = template.shape[:2]
-        
+
+        # 裁剪区域
+        search_img = screenshot
+        offset_x, offset_y = 0, 0
+
+        if region:
+            x1, y1, x2, y2 = region
+            h_img, w_img = screenshot.shape[:2]
+            x1 = max(0, min(x1, w_img))
+            y1 = max(0, min(y1, h_img))
+            x2 = max(x1, min(x2, w_img))
+            y2 = max(y1, min(y2, h_img))
+            search_img = screenshot[y1:y2, x1:x2]
+            offset_x, offset_y = x1, y1
+
         # 模板匹配
-        result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
-        
+        result = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
+
         # 查找所有峰值
         locations = np.where(result >= threshold)
         matches = []
-        
+
         for pt in zip(*locations[::-1]):
             # 检查与已有匹配的距离
             is_duplicate = False
             for existing in matches:
-                dist = np.sqrt((pt[0] - existing[0])**2 + (pt[1] - existing[1])**2)
+                dist = np.sqrt((pt[0] - (existing[0] - offset_x))**2 +
+                             (pt[1] - (existing[1] - offset_y))**2)
                 if dist < min_distance:
                     is_duplicate = True
                     break
-            
+
             if not is_duplicate:
-                matches.append((pt[0], pt[1], w, h))
-        
-        logger.debug(f"找到 {len(matches)} 个 '{template_name}' 模板")
+                # 还原到全图坐标
+                matches.append((offset_x + pt[0], offset_y + pt[1], w, h))
+
         return matches
     
     def get_center(self, rect: Tuple[int, int, int, int]) -> Tuple[int, int]:
