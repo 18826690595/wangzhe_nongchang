@@ -284,3 +284,7 @@ class VisionEngine:
                 return (x, y)
         
         return None
+
+
+# 全局实例
+vision_engine = VisionEngine()
